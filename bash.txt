@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# Function to log into OpenShift cluster
+login_to_cluster() {
+  local cluster_url=$1
+  local username=$2
+  local password=$3
+
+  echo "Attempting login to $cluster_url..."
+  oc login "$cluster_url" -u "$username" -p "$password" --insecure-skip-tls-verify=true
+  if [ $? -ne 0 ]; then
+    echo "Login failed for cluster $cluster_url" >> login_failures.log
+    return 1
+  fi
+}
+
+# Function to check for images in all namespaces
+check_pods_for_image() {
+  local image=$1
+  local cluster_name=$2
+
+  echo "Checking for image $image in all namespaces on cluster $cluster_name..."
+
+  oc get pods --all-namespaces -o json | jq -r \
+    '.items[] | .metadata.namespace as $namespace | .metadata.name as $pod | 
+     .spec.containers[] | select(.image | contains("'"$image"'")) | 
+     [env.cluster_name, $namespace, $pod, .name, .image] | 
+     @csv' > image_usage.csv
+}
+
+# Main logic
+if [[ $# -lt 4 ]]; then
+  echo "Usage: $0 <cluster_url> <username> <password> <image_file_or_manual>"
+  exit 1
+fi
+
+cluster_url=$1
+username=$2
+password=$3
+image_source=$4
+
+# Get the cluster name for reporting purposes
+cluster_name=$(echo $cluster_url | awk -F[/:] '{print $4}')
+
+# Log into the cluster
+login_to_cluster "$cluster_url" "$username" "$password"
+if [ $? -ne 0 ]; then
+  echo "Exiting due to login failure."
+  exit 1
+fi
+
+# Get image list from file or prompt for manual entry
+if [[ -f "$image_source" ]]; then
+  images=$(cat "$image_source")
+else
+  echo "Enter the image values, separated by spaces:"
+  read -a images
+fi
+
+# Check each specified image across all namespaces
+for image in $images; do
+  check_pods_for_image "$image" "$cluster_name"
+done
+
+echo "Check complete. Results saved to image_usage.csv."
+
+
+
+./script.sh "https://cluster-url" "username" "password" "image_file_or_manual"
